@@ -1,30 +1,25 @@
-// Cole isto em /pages/index.js
+// /pages/index.js
+// --- CÓDIGO CORRIGIDO ---
+// A correção impede que o 'localStorage' seja chamado no servidor.
 
 import { useEffect, useMemo, useRef, useState } from "react";
 
-/** ========= CONFIG =========
- * Limites padrão e lista de devices (edite a seu gosto).
- */
+/** ========= CONFIG ========= */
 const DEFAULT_LIMITS = {
   temp: { min: 18, max: 27 }, // °C
   hum: { min: 30, max: 70 },  // %
 };
 
-// ----- LISTA DE DISPOSITIVOS ATUALIZADA -----
 const DEVICES = [
   { id: "eb798cab6fd0612ab95jwc", name: "Sala-T5" },
   { id: "eb4834395c8fbc4dfefpe9", name: "Sala-T4" },
   { id: "eb13a02df36c15cc0czqmm", name: "Sala-T3" },
   { id: "eb08f82b6ddb5a1699dced", name: "Sala-T2" },
-  // { id: "COLE_O_ID_5_AQUI", name: "Sensor 5" },
-  // { id: "COLE_O_ID_6_AQUI", name: "Sensor 6" },
-  // { id: "COLE_O_ID_7_AQUI", name: "Sensor 7" },
 ];
-// ---------------------------------------------
 
-const DEFAULT_REFRESH_SECONDS = 30;      // auto-atualização (0 = manual)
-const HISTORY_WINDOW_MS = 24 * 60 * 60 * 1000; // 24h
-const HISTORY_MAX_POINTS = 480;      // segurança
+const DEFAULT_REFRESH_SECONDS = 30;
+const HISTORY_WINDOW_MS = 24 * 60 * 60 * 1000;
+const HISTORY_MAX_POINTS = 480;
 
 /** ========= HELPERS ========= */
 function parseFunctionValues(valuesStr) {
@@ -79,9 +74,7 @@ function csvFromHistory(name, arr) {
   URL.revokeObjectURL(a.href);
 }
 
-// --- NOSSAS FUNÇÕES DE API ---
 async function getAccessToken() {
-  // 1. Chama o nosso /api/get-tuya-token
   const r = await fetch("/api/get-tuya-token"); 
   const j = await r.json();
   if (j?.success && j?.result?.access_token) return j.result.access_token;
@@ -89,7 +82,6 @@ async function getAccessToken() {
 }
 
 async function tuyaProxy({ token, tuyaPath, method = "GET", body = {} }) {
-  // 2. Chama o nosso /api/proxy
   const r = await fetch("/api/proxy", { 
     method: "POST",
     headers: {
@@ -103,7 +95,6 @@ async function tuyaProxy({ token, tuyaPath, method = "GET", body = {} }) {
   const j = await r.json();
   return { status: r.status, data: j };
 }
-// ----------------------------
 
 function prefer(keys, statusArr) {
   const map = new Map((statusArr || []).map((s) => [s.code, s.value]));
@@ -119,6 +110,7 @@ function prefer(keys, statusArr) {
   return null;
 }
 function loadHistory(deviceId) {
+  // Esta função SÓ é chamada no navegador (cliente), então é segura
   if (typeof window === "undefined") return [];
   try { return JSON.parse(localStorage.getItem(`history:${deviceId}`) || "[]"); }
   catch { return []; }
@@ -141,7 +133,7 @@ function Badge({ type = "loading", children }) {
   };
   const palette =
     type === "ok" ? { background: "#E8F5E9", color: "#2E7D32", borderColor: "#C8E6C9" } :
-    type ===="error" ? { background: "#FFEBEE", color: "#C62828", borderColor: "#FFCDD2" } :
+    type === "error" ? { background: "#FFEBEE", color: "#C62828", borderColor: "#FFCDD2" } :
     type === "warn" ? { background: "#FFF8E1", color: "#EF6C00", borderColor: "#FFE0B2" } :
                       { background: "#E3F2FD", color: "#1565C0", borderColor: "#BBDEFB" };
   return <span style={{ ...base, ...palette }}>{children}</span>;
@@ -194,12 +186,11 @@ export default function TuyaMultiEnvDashboard() {
   const [error, setError] = useState("");
   const [lastUpdated, setLastUpdated] = useState(null);
 
-  // novos estados de UI
-  const [query, setQuery] = useState("");              // busca
-  const [sortKey, setSortKey] = useState("name");      // name | temp | hum | batt
-  const [sortDir, setSortDir] = useState("asc");       // asc | desc
-  const [onlyOffline, setOnlyOffline] = useState(false);     // filtro
-  const [onlyAlert, setOnlyAlert] = useState(false);     // filtro
+  const [query, setQuery] = useState("");
+  const [sortKey, setSortKey] = useState("name");
+  const [sortDir, setSortDir] = useState("asc");
+  const [onlyOffline, setOnlyOffline] = useState(false);
+  const [onlyAlert, setOnlyAlert] = useState(false);
 
   const [items, setItems] = useState(() =>
     DEVICES.map((d) => ({
@@ -214,11 +205,18 @@ export default function TuyaMultiEnvDashboard() {
     }))
   );
 
-  const [history, setHistory] = useState(() => {
-    const obj = {};
-    DEVICES.forEach((d) => (obj[d.id] = loadHistory(d.id)));
-    return obj;
-  });
+  // --- ESTA É A CORREÇÃO ---
+  // Inicia o histórico como um objeto vazio
+  const [history, setHistory] = useState({});
+  
+  // Este hook roda APENAS no navegador (cliente), DEPOIS que a página carrega.
+  // Ele vai carregar o histórico do localStorage de forma segura.
+  useEffect(() => {
+    const initialHistory = {};
+    DEVICES.forEach((d) => (initialHistory[d.id] = loadHistory(d.id)));
+    setHistory(initialHistory);
+  }, []);
+  // -------------------------
 
   const timerRef = useRef(null);
 
@@ -316,7 +314,6 @@ export default function TuyaMultiEnvDashboard() {
       results.forEach((res) => {
         if (!res?.ok || res?.online === false) return;
         const fnMap = new Map((res.functions?.functions || []).map((f) => [f.code, f]));
-        // Prefs baseadas nos nossos testes (va_temperature, va_humidity)
         const tempPref = ["va_temperature", "temp_current", "temperature", "temp_value", "temp_set"];
         const humPref  = ["va_humidity", "humidity_value", "humidity"];
         const tSel = prefer(tempPref, res.status);
@@ -352,7 +349,6 @@ export default function TuyaMultiEnvDashboard() {
     const deviceCfg = DEVICES.find(d => d.id === devMeta.id) || {};
     const lim = limitsFor(deviceCfg);
     const fnMap = new Map((devMeta.functions?.functions || []).map((f) => [f.code, f]));
-    // Prefs baseadas nos nossos testes
     const tempPref = ["va_temperature", "temp_current", "temperature", "temp_value", "temp_set"];
     const humPref  = ["va_humidity", "humidity_value", "humidity"];
     const batPref  = ["battery_percentage", "battery_value", "battery_state", "battery"];
@@ -383,14 +379,12 @@ export default function TuyaMultiEnvDashboard() {
 
   /** ======== busca + filtros + ordenação ======== */
   const visibleItems = useMemo(() => {
-    // 1) busca
     let arr = items.filter((d) => {
       const q = query.trim().toLowerCase();
       if (!q) return true;
       return d.name.toLowerCase().includes(q) || d.id.toLowerCase().includes(q);
     });
 
-    // 2) filtrar offline/alerta
     if (onlyOffline || onlyAlert) {
       arr = arr.filter((d) => {
         const m = metricsFor(d);
@@ -403,7 +397,6 @@ export default function TuyaMultiEnvDashboard() {
       });
     }
 
-    // 3) ordenar
     const withMetrics = arr.map((d) => ({ d, m: metricsFor(d) }));
     withMetrics.sort((A, B) => {
       const a = A.d, b = B.d;
@@ -520,16 +513,7 @@ export default function TuyaMultiEnvDashboard() {
   const selectCss = { padding: "8px 12px", borderRadius: 12, border: "1px solid #ddd" };
   const btn = { padding: "8px 16px", borderRadius: 16, background: "#111827", color: "#fff", border: "none", cursor: "pointer" };
   const checkbox = { display: "inline-flex", alignItems: "center", gap: 6, fontSize: 13, color: "#374151" };
-  
-  // Mídia query para telas maiores
-  const gridAllResponsive = {
-    ...gridAll,
-    '@media (min-width: 1024px)': {
-      gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
-    },
-  };
 
-  // Como o Next.js não suporta @media em style inline, precisamos de <style>
   const responsiveStyle = `
     @media (min-width: 1024px) {
       .main-grid {
@@ -540,7 +524,7 @@ export default function TuyaMultiEnvDashboard() {
 
   return (
     <div style={page}>
-      <style>{responsiveStyle}</style> {/* Adiciona o estilo responsivo */}
+      <style>{responsiveStyle}</style>
       <div style={container}>
         <div style={header}>
           <div>
@@ -593,7 +577,7 @@ export default function TuyaMultiEnvDashboard() {
           </div>
         ) : null}
 
-        <div style={gridAll} className="main-grid"> {/* Aplica a classe p/ responsividade */}
+        <div style={gridAll} className="main-grid">
             {visibleItems.map((d) => renderDevice(d))}
         </div>
 
