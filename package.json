@@ -1,0 +1,6 @@
+{
+  "name": "meu-proxy-tuya",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Proxy da API Tuya para Vercel"
+}
