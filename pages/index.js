@@ -1,6 +1,6 @@
 // /pages/index.js
-// --- CÓDIGO CORRIGIDO ---
-// A correção impede que o 'localStorage' seja chamado no servidor.
+// --- CÓDIGO CORRIGIDO (v2) ---
+// Adicionada correção manual de escala para 'va_temperature'
 
 import { useEffect, useMemo, useRef, useState } from "react";
 
@@ -28,8 +28,15 @@ function parseFunctionValues(valuesStr) {
 function scaleNormalize(value, meta) {
   if (!meta) return value;
   if (meta?.type === "Integer") {
-    const conf = parseFunctionValues(meta.values);
+    let conf = {};
+    if (typeof meta.values === 'string') {
+        try { conf = JSON.parse(meta.values || "{}"); } catch { conf = {}; }
+    } else if (typeof meta.values === 'object' && meta.values !== null) {
+        conf = meta.values; // Já é um objeto
+    }
+    
     const scale = Number(conf.scale || 0);
+    
     if (Number.isFinite(value) && Number.isFinite(scale) && scale > 0) {
       return value / Math.pow(10, scale);
     }
@@ -110,7 +117,6 @@ function prefer(keys, statusArr) {
   return null;
 }
 function loadHistory(deviceId) {
-  // Esta função SÓ é chamada no navegador (cliente), então é segura
   if (typeof window === "undefined") return [];
   try { return JSON.parse(localStorage.getItem(`history:${deviceId}`) || "[]"); }
   catch { return []; }
@@ -205,18 +211,12 @@ export default function TuyaMultiEnvDashboard() {
     }))
   );
 
-  // --- ESTA É A CORREÇÃO ---
-  // Inicia o histórico como um objeto vazio
   const [history, setHistory] = useState({});
-  
-  // Este hook roda APENAS no navegador (cliente), DEPOIS que a página carrega.
-  // Ele vai carregar o histórico do localStorage de forma segura.
   useEffect(() => {
     const initialHistory = {};
     DEVICES.forEach((d) => (initialHistory[d.id] = loadHistory(d.id)));
     setHistory(initialHistory);
   }, []);
-  // -------------------------
 
   const timerRef = useRef(null);
 
@@ -363,6 +363,16 @@ export default function TuyaMultiEnvDashboard() {
     let tVal = tSel ? scaleNormalize(tSel.value, tMeta) : null;
     let hVal = hSel ? scaleNormalize(hSel.value, hMeta) : null;
     let bVal = bSel ? bSel.value : null;
+
+    // --- CORREÇÃO DE ESCALA MANUAL ---
+    // Se a normalização automática falhou (tVal === tSel.value)
+    // E o código for 'va_temperature' (sabemos que este tem escala)
+    // E o valor for irrealisticamente alto (acima de 100), aplicamos a escala de 10.
+    if (tSel && (tSel.code === 'va_temperature' || tSel.code === 'temp_current') && tVal === tSel.value && Math.abs(tVal) > 100) {
+       tVal = tVal / 10.0;
+    }
+    // --- FIM DA CORREÇÃO ---
+
 
     if (typeof bVal === "string") {
       const map = { low: 20, medium: 50, high: 80, full: 100 };
