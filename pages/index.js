@@ -6,17 +6,12 @@ import React, { useEffect, useMemo, useRef, useState } from "react"; // <--- MUD
 
 /** ========= CONFIG ========= */
 const DEVICES = [
-  { id: "eb798cab6fd0612ab95jwc", name: "Sala-T5" },
+ 
   { id: "eb4834395c8fbc4dfefpe9", name: "Sala-T4" },
-  { id: "eb13a02df36c15cc0czqmm", name: "Sala-T3" },
-  { id: "eb08f82b6ddb5a1699dced", name: "Sala-T2" },
-  { id: "COLE_O_ID_5_AQUI", name: "Sensor 5" },
-  { id: "COLE_O_ID_6_AQUI", name: "Sensor 6" },
-  { id: "COLE_O_ID_7_AQUI", name: "Sensor 7" },
-  { id: "COLE_O_ID_8_AQUI", name: "Sensor 8" },
-  { id: "COLE_O_ID_9_AQUI", name: "Sensor 9" },
-  { id: "COLE_O_ID_10_AQUI", name: "Sensor 10" },
-];
+  { id: "eb13a02df36c15cc0czqmm", name: "Sala 3-2SS" },
+  { id: "eb08f82b6ddb5a1699dced", name: "Sala 2 - Day" },
+
+
 
 const DEFAULT_REFRESH_SECONDS = 300; // 5 minutos
 const HISTORY_WINDOW_MS = 24 * 60 * 60 * 1000; // 24h
