@@ -554,7 +554,7 @@ export default function TuyaMultiEnvDashboard() {
   return (
     <div style={styles.page}>
       <div style={styles.header}>
-        <h1 style={{ fontSize: "2.5em", margin: 0 }}> Monitoramento Temperaturas Salas Cirúrgicas - HOEB </h1>
+        <h1 style={{ fontSize: "2.5em", margin: 0 }}> Temperaturas - Salas Cirúrgicas - HOEB </h1>
         <div style={{ fontSize: 12, color: "#6b7280" }}>
           Última atualização: {lastUpdated ? lastUpdated.toLocaleString() : "—"}
           (Auto-refresh:
