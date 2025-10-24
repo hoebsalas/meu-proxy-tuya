@@ -1,17 +1,17 @@
 // /pages/index.js
-// --- CÓDIGO ATUALIZADO (v6) ---
-// Importa React explicitamente para corrigir erro de build na Vercel
+// --- CÓDIGO REVISADO (v7) ---
+// Garantindo a sintaxe correta
 
-import React, { useEffect, useMemo, useRef, useState } from "react"; // <--- MUDANÇA AQUI
+import React, { useEffect, useMemo, useRef, useState } from "react";
 
 /** ========= CONFIG ========= */
 const DEVICES = [
- 
+  { id: "eb798cab6fd0612ab95jwc", name: "Sala-T5" },
   { id: "eb4834395c8fbc4dfefpe9", name: "Sala-T4" },
-  { id: "eb13a02df36c15cc0czqmm", name: "Sala 3-2SS" },
-  { id: "eb08f82b6ddb5a1699dced", name: "Sala 2 - Day" },
-
-
+  { id: "eb13a02df36c15cc0czqmm", name: "Sala-T3" },
+  { id: "eb08f82b6ddb5a1699dced", name: "Sala-T2" },
+  // Adicione mais dispositivos aqui se precisar, copiando o formato { id: "...", name: "..." },
+];
 
 const DEFAULT_REFRESH_SECONDS = 300; // 5 minutos
 const HISTORY_WINDOW_MS = 24 * 60 * 60 * 1000; // 24h
@@ -44,18 +44,42 @@ async function getAccessToken() {
   throw new Error(j?.msg || "Falha ao obter access_token");
 }
 async function tuyaProxy({ token, tuyaPath, method = "GET", body = {} }) {
+  // ADICIONANDO REGRAS DE CORS AQUI (já que removemos o vercel.json)
+  const responseHeaders = {
+    'Access-Control-Allow-Origin': '*', // Permite qualquer origem
+    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Tuya-Method, X-Tuya-Path',
+  };
+
+  // Responde ao Preflight OPTIONS
+  if (method === 'OPTIONS_PREFLIGHT_FOR_PROXY') {
+      // Nota: Esta condição especial nunca será acionada pelo fetch normal,
+      // mas o código do handler em /api/proxy PRECISA ser atualizado
+      // para lidar com o método OPTIONS real.
+      // Esta função tuyaProxy agora retorna os headers CORS.
+      return { status: 200, data: {}, headers: responseHeaders };
+  }
+
   const r = await fetch("/api/proxy", {
-    method: "POST",
+    method: "POST", // A chamada para o proxy é sempre POST
     headers: {
       Authorization: `Bearer ${token}`,
-      "X-Tuya-Method": method,
+      "X-Tuya-Method": method, // O método real para a Tuya
       "X-Tuya-Path": tuyaPath,
       "Content-Type": "application/json",
     },
     body: JSON.stringify(body ?? {}),
   });
   const j = await r.json();
-  return { status: r.status, data: j };
+
+  // Adiciona cabeçalhos CORS à resposta final
+  const finalHeaders = { ...responseHeaders };
+  // Copia outros cabeçalhos relevantes se necessário (ex: Content-Type)
+  if (r.headers.has('content-type')) {
+      finalHeaders['Content-Type'] = r.headers.get('content-type');
+  }
+
+  return { status: r.status, data: j, headers: finalHeaders };
 }
 function prefer(keys, statusArr) {
   const map = new Map((statusArr || []).map((s) => [s.code, s.value]));
@@ -415,13 +439,13 @@ export default function TuyaMultiEnvDashboard() {
       const results = await Promise.all(
         DEVICES.map(async (d) => {
           if (d.id.startsWith("COLE_O_ID_")) {
-            return { id: d.id, ok: false, err: "ID não configurado" };
+            return { id: d.id, ok: false, err: "ID não configurado", name: d.name };
           }
           try {
             const r = await fetchOne(d.id, tk);
-            return { id: d.id, ok: true, ...r };
+            return { id: d.id, ok: true, name: d.name, ...r };
           } catch (e) {
-            return { id: d.id, ok: false, err: e?.message || String(e) };
+            return { id: d.id, ok: false, err: e?.message || String(e), name: d.name };
           }
         })
       );
@@ -429,9 +453,10 @@ export default function TuyaMultiEnvDashboard() {
       setItems((prev) =>
         prev.map((p) => {
           const found = results.find((r) => r.id === p.id);
-          if (!found) return p;
+          if (!found) return { ...p, name: p.name || `Device ${p.id}` }; // Ensure name exists
           return {
             ...p,
+            name: found.name || `Device ${p.id}`, // Ensure name exists
             status: found.status || [],
             functions: found.functions || null,
             online: found.online,
@@ -470,7 +495,7 @@ export default function TuyaMultiEnvDashboard() {
 
       setLastUpdated(new Date());
     } catch (e) {
-      setError(String(e)); // Garante que o erro é uma string
+      setError(String(e));
     }
   }
 
@@ -489,7 +514,10 @@ export default function TuyaMultiEnvDashboard() {
   // Pré-calcula métricas para todos os itens
   const itemsWithMetrics = useMemo(() => {
     return items.map(devMeta => {
-      const fnMap = new Map((devMeta.functions?.functions || []).map((f) => [f.code, f]));
+      // Garante que devMeta.functions existe e é um objeto antes de tentar mapear
+      const functionsArray = devMeta.functions?.functions || [];
+      const fnMap = new Map(functionsArray.map((f) => [f.code, f]));
+      
       const tempPref = ["va_temperature", "temp_current", "temperature", "temp_value", "temp_set"];
       const humPref  = ["va_humidity", "humidity_value", "humidity"];
       const batPref  = ["battery_percentage", "battery_value", "battery_state", "battery"];
@@ -555,7 +583,11 @@ export default function TuyaMultiEnvDashboard() {
           <DeviceCard
              key={d.id}
              devMeta={d}
-             onTempClick={() => setModalDevice(d)}
+             onTempClick={() => {
+                 if (!d.id.startsWith("COLE_O_ID_")) { // Só abre se o ID for real
+                     setModalDevice(d);
+                 }
+             }}
           />
         ))}
       </div>
