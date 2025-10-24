@@ -6,10 +6,9 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 
 /** ========= CONFIG ========= */
 const DEVICES = [
-  { id: "eb798cab6fd0612ab95jwc", name: "Sala-T5" },
-  { id: "eb4834395c8fbc4dfefpe9", name: "Sala-T4" },
-  { id: "eb13a02df36c15cc0czqmm", name: "Sala-T3" },
-  { id: "eb08f82b6ddb5a1699dced", name: "Sala-T2" },
+  { id: "eb4834395c8fbc4dfefpe9", name: "Sala-CW" },
+  { id: "eb13a02df36c15cc0czqmm", name: "Sala 3-2SS" },
+  { id: "eb08f82b6ddb5a1699dced", name: "Sala 2-DAY" },
   // Adicione mais dispositivos aqui se precisar, copiando o formato { id: "...", name: "..." },
 ];
 
