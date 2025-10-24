@@ -1,8 +1,8 @@
 // /pages/index.js
-// --- CÓDIGO ATUALIZADO (v5) ---
-// Adiciona Histórico 24h e Modal de Gráfico ao clicar na Temperatura
+// --- CÓDIGO ATUALIZADO (v6) ---
+// Importa React explicitamente para corrigir erro de build na Vercel
 
-import { useEffect, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react"; // <--- MUDANÇA AQUI
 
 /** ========= CONFIG ========= */
 const DEVICES = [
@@ -43,13 +43,13 @@ function scaleNormalize(value, meta) {
   return value;
 }
 async function getAccessToken() {
-  const r = await fetch("/api/get-tuya-token"); 
+  const r = await fetch("/api/get-tuya-token");
   const j = await r.json();
   if (j?.success && j?.result?.access_token) return j.result.access_token;
   throw new Error(j?.msg || "Falha ao obter access_token");
 }
 async function tuyaProxy({ token, tuyaPath, method = "GET", body = {} }) {
-  const r = await fetch("/api/proxy", { 
+  const r = await fetch("/api/proxy", {
     method: "POST",
     headers: {
       Authorization: `Bearer ${token}`,
@@ -75,8 +75,6 @@ function prefer(keys, statusArr) {
   }
   return null;
 }
-
-// --- LÓGICA DE HISTÓRICO ADICIONADA ---
 function loadHistory(deviceId) {
   if (typeof window === "undefined") return [];
   try { return JSON.parse(localStorage.getItem(`history:${deviceId}`) || "[]"); }
@@ -86,56 +84,55 @@ function saveHistory(deviceId, arr) {
   if (typeof window === "undefined") return;
   try { localStorage.setItem(`history:${deviceId}`, JSON.stringify(arr)); } catch {}
 }
-// ------------------------------------
 
 /** ========= ESTILOS (CSS-in-JS) ========= */
 const styles = {
-  page: { 
+  page: {
     fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
-    backgroundColor: "#f0f2f5", 
-    margin: 0, 
+    backgroundColor: "#f0f2f5",
+    margin: 0,
     padding: "20px",
     minHeight: "100vh",
   },
-  header: { 
-    textAlign: "center", 
-    color: "#1c1e21", 
-    width: "100%", 
-    marginBottom: "20px" 
+  header: {
+    textAlign: "center",
+    color: "#1c1e21",
+    width: "100%",
+    marginBottom: "20px"
   },
-  container: { 
-    display: "flex", 
-    flexWrap: "wrap", 
-    justifyContent: "center", 
+  container: {
+    display: "flex",
+    flexWrap: "wrap",
+    justifyContent: "center",
     gap: "20px",
     maxWidth: 1400,
     margin: "0 auto",
   },
-  card: { 
-    backgroundColor: "white", 
-    borderRadius: "8px", 
-    boxShadow: "0 4px 8px rgba(0,0,0,0.1)", 
-    padding: "20px", 
-    minWidth: "260px", 
-    textAlign: "center", 
+  card: {
+    backgroundColor: "white",
+    borderRadius: "8px",
+    boxShadow: "0 4px 8px rgba(0,0,0,0.1)",
+    padding: "20px",
+    minWidth: "260px",
+    textAlign: "center",
     transition: "transform 0.2s, opacity 0.2s",
     opacity: 1,
   },
   cardOffline: {
     opacity: 0.6,
   },
-  cardTitle: { 
-    marginTop: 0, 
-    color: "#05386b", 
-    fontSize: "1.5em", 
+  cardTitle: {
+    marginTop: 0,
+    color: "#05386b",
+    fontSize: "1.5em",
     fontWeight: 600,
     marginBottom: "20px",
   },
-  data: { 
-    display: "flex", 
-    justifyContent: "space-around", 
-    alignItems: "center", 
-    margin: "20px 0", 
+  data: {
+    display: "flex",
+    justifyContent: "space-around",
+    alignItems: "center",
+    margin: "20px 0",
     color: "#333",
     flexWrap: "wrap",
     gap: "16px",
@@ -143,43 +140,43 @@ const styles = {
   dataPoint: {
     fontSize: "2em",
   },
-  dataUnit: { 
-    fontSize: "0.5em", 
-    color: "#666", 
+  dataUnit: {
+    fontSize: "0.5em",
+    color: "#666",
     verticalAlign: "super",
   },
-  battery: { 
-    fontSize: "1em", 
-    color: "#555", 
-    marginTop: "15px", 
+  battery: {
+    fontSize: "1em",
+    color: "#555",
+    marginTop: "15px",
   },
-  statusBanner: { 
-    marginTop: "15px", 
-    padding: "10px", 
-    borderRadius: "5px", 
-    color: "white", 
+  statusBanner: {
+    marginTop: "15px",
+    padding: "10px",
+    borderRadius: "5px",
+    color: "white",
     fontWeight: "bold",
   },
-  statusLoading: { 
+  statusLoading: {
     background: "#ff9800", // Laranja
   },
-  statusOk: { 
+  statusOk: {
     background: "#4CAF50", // Verde
   },
-  statusError: { 
+  statusError: {
     background: "#f44336", // Vermelho
   },
-  globalError: { 
-    color: "#f44336", 
-    fontWeight: "bold", 
-    marginTop: 20, 
-    minHeight: 20, 
-    textAlign: "center", 
+  globalError: {
+    color: "#f44336",
+    fontWeight: "bold",
+    marginTop: 20,
+    minHeight: 20,
+    textAlign: "center",
     width: "100%",
   },
 };
 
-/** ========= COMPONENTE DE GRÁFICO (ADICIONADO) ========= */
+/** ========= COMPONENTE DE GRÁFICO ========= */
 function Sparkline({ values = [], stroke = "#0ea5e9", width = 220, height = 48 }) {
   const W = width, H = height, P = 6;
   if (!values.length || values.length < 2) return (
@@ -203,7 +200,7 @@ function Sparkline({ values = [], stroke = "#0ea5e9", width = 220, height = 48 }
   );
 }
 
-/** ========= COMPONENTE DO MODAL (ADICIONADO) ========= */
+/** ========= COMPONENTE DO MODAL ========= */
 function HistoryModal({ device, historyData, onClose }) {
   const modalOverlay = {
     position: 'fixed',
@@ -262,10 +259,10 @@ function HistoryModal({ device, historyData, onClose }) {
           <div style={modalTitle}>Histórico 24h: {device.name}</div>
           <button style={closeButton} onClick={onClose}>&times;</button>
         </div>
-        
+
         <div style={chartLabel}>Temperatura (°C) - (Últimas 24h)</div>
         <Sparkline values={tempSeries} stroke="#0ea5e9" width={450} height={80} />
-        
+
         <div style={{...chartLabel, marginTop: '20px'}}>Umidade (%) - (Últimas 24h)</div>
         <Sparkline values={humSeries} stroke="#10b981" width={450} height={80} />
       </div>
@@ -273,11 +270,11 @@ function HistoryModal({ device, historyData, onClose }) {
   );
 }
 
-/** ========= COMPONENTE DO CARD (MODIFICADO) ========= */
+/** ========= COMPONENTE DO CARD ========= */
 function DeviceCard({ devMeta, onTempClick }) {
-  const { 
-    tVal, hVal, bVal, 
-    tempAlert, humAlert, lowBattery 
+  const {
+    tVal, hVal, bVal,
+    tempAlert, humAlert, lowBattery
   } = devMeta.metrics;
 
   const isLoading = devMeta.loading;
@@ -309,15 +306,14 @@ function DeviceCard({ devMeta, onTempClick }) {
   if (isOffline) {
     cardStyle = {...cardStyle, ...styles.cardOffline};
   }
-  
+
   return (
     <div style={cardStyle}>
       <h2 style={styles.cardTitle}>{devMeta.name}</h2>
       <div style={styles.data}>
-        {/* --- DIV CLICÁVEL ADICIONADA --- */}
-        <div 
-          style={{...styles.dataPoint, cursor: 'pointer'}} 
-          onClick={onTempClick} 
+        <div
+          style={{...styles.dataPoint, cursor: 'pointer'}}
+          onClick={onTempClick}
           title="Ver histórico 24h"
         >
           {tempStr}<span style={styles.dataUnit}>°C</span>
@@ -332,15 +328,15 @@ function DeviceCard({ devMeta, onTempClick }) {
   );
 }
 
-/** ========= PÁGINA PRINCIPAL (MODIFICADA) ========= */
+/** ========= PÁGINA PRINCIPAL ========= */
 export default function TuyaMultiEnvDashboard() {
   const [token, setToken] = useState(null);
   const [refreshSec, setRefreshSec] = useState(DEFAULT_REFRESH_SECONDS);
   const [error, setError] = useState("");
   const [lastUpdated, setLastUpdated] = useState(null);
-  
-  const [modalDevice, setModalDevice] = useState(null); // Estado para o modal
-  
+
+  const [modalDevice, setModalDevice] = useState(null);
+
   const [items, setItems] = useState(() =>
     DEVICES.map((d) => ({
       id: d.id,
@@ -354,7 +350,6 @@ export default function TuyaMultiEnvDashboard() {
     }))
   );
 
-  // Estado para o histórico, carregado do localStorage no cliente
   const [history, setHistory] = useState({});
   useEffect(() => {
     const initialHistory = {};
@@ -364,7 +359,6 @@ export default function TuyaMultiEnvDashboard() {
 
   const timerRef = useRef(null);
 
-  // Função para salvar no histórico
   function pushHistory(deviceId, { temp, hum, t }) {
     const now = t || Date.now();
     setHistory((prev) => {
@@ -453,18 +447,17 @@ export default function TuyaMultiEnvDashboard() {
         })
       );
 
-      // --- LÓGICA DE HISTÓRICO ADICIONADA AQUI ---
       const now = Date.now();
       results.forEach((res) => {
           if (!res?.ok || res?.online === false) return;
-          
+
           const fnMap = new Map((res.functions?.functions || []).map((f) => [f.code, f]));
           const tempPref = ["va_temperature", "temp_current", "temperature", "temp_value", "temp_set"];
           const humPref  = ["va_humidity", "humidity_value", "humidity"];
-          
+
           const tSel = prefer(tempPref, res.status);
           const hSel = prefer(humPref,  res.status);
-          
+
           const tMeta = tSel ? fnMap.get(tSel.code) : null;
           const hMeta = hSel ? fnMap.get(hSel.code) : null;
 
@@ -479,11 +472,10 @@ export default function TuyaMultiEnvDashboard() {
             pushHistory(res.id, { t: now, temp: typeof tVal === "number" ? tVal : null, hum: typeof hVal === "number" ? hVal : null });
           }
       });
-      // ------------------------------------------
 
       setLastUpdated(new Date());
     } catch (e) {
-      setError(e?.message || String(e));
+      setError(String(e)); // Garante que o erro é uma string
     }
   }
 
@@ -492,7 +484,7 @@ export default function TuyaMultiEnvDashboard() {
     return () => timerRef.current && clearInterval(timerRef.current);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-  
+
   useEffect(() => {
     if (timerRef.current) clearInterval(timerRef.current);
     if (refreshSec > 0) timerRef.current = setInterval(loadAll, refreshSec * 1000);
@@ -521,7 +513,7 @@ export default function TuyaMultiEnvDashboard() {
       if (tSel && (tSel.code === 'va_temperature' || tSel.code === 'temp_current') && tVal === tSel.value && Math.abs(tVal) > 100) {
          tVal = tVal / 10.0;
       }
-      
+
       if (typeof bVal === "string") {
         const map = { low: 20, medium: 50, high: 80, full: 100 };
         bVal = map[bVal.toLowerCase()] ?? bVal;
@@ -543,16 +535,16 @@ export default function TuyaMultiEnvDashboard() {
         <h1 style={{ fontSize: "2.5em", margin: 0 }}>Painel de Monitoramento (Versão Final)</h1>
         <div style={{ fontSize: 12, color: "#6b7280" }}>
           Última atualização: {lastUpdated ? lastUpdated.toLocaleString() : "—"}
-          (Auto-refresh: 
-          <select 
-             value={refreshSec} 
+          (Auto-refresh:
+          <select
+             value={refreshSec}
              onChange={(e) => setRefreshSec(Number(e.target.value))}
              style={{ marginLeft: 5, fontSize: 12, border: 'none', background: 'transparent' }}
           >
             <option value={0}>Manual</option>
             <option value={300}>5m</option>
             <option value={600}>10m</option>
-            <option valueV={1800}>30m</option>
+            <option value={1800}>30m</option>
           </select>
           )
           <button onClick={loadAll} style={{ marginLeft: 10, padding: "4px 8px", fontSize: 12, cursor: 'pointer' }}>Atualizar Agora</button>
@@ -560,25 +552,24 @@ export default function TuyaMultiEnvDashboard() {
       </div>
 
       {error && (
-        <p style={styles.globalError}>Erro Global: {String(error)}</p>
+        <p style={styles.globalError}>Erro Global: {error}</p>
       )}
 
       <div style={styles.container}>
         {itemsWithMetrics.map((d) => (
-          <DeviceCard 
-             key={d.id} 
-             devMeta={d} 
-             onTempClick={() => setModalDevice(d)} // Define o dispositivo para o modal
+          <DeviceCard
+             key={d.id}
+             devMeta={d}
+             onTempClick={() => setModalDevice(d)}
           />
         ))}
       </div>
 
-      {/* --- RENDERIZA O MODAL (SE MODALDEVICE ESTIVER DEFINIDO) --- */}
       {modalDevice && (
-        <HistoryModal 
+        <HistoryModal
           device={modalDevice}
           historyData={history[modalDevice.id] || []}
-          onClose={() => setModalDevice(null)} // Função para fechar o modal
+          onClose={() => setModalDevice(null)}
         />
       )}
     </div>
