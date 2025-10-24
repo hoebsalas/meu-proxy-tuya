@@ -1,27 +1,28 @@
 // /pages/index.js
-// --- CÓDIGO CORRIGIDO (v2) ---
-// Adicionada correção manual de escala para 'va_temperature'
+// --- CÓDIGO ATUALIZADO (v5) ---
+// Adiciona Histórico 24h e Modal de Gráfico ao clicar na Temperatura
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 /** ========= CONFIG ========= */
-const DEFAULT_LIMITS = {
-  temp: { min: 18, max: 27 }, // °C
-  hum: { min: 30, max: 70 },  // %
-};
-
 const DEVICES = [
   { id: "eb798cab6fd0612ab95jwc", name: "Sala-T5" },
   { id: "eb4834395c8fbc4dfefpe9", name: "Sala-T4" },
   { id: "eb13a02df36c15cc0czqmm", name: "Sala-T3" },
   { id: "eb08f82b6ddb5a1699dced", name: "Sala-T2" },
+  { id: "COLE_O_ID_5_AQUI", name: "Sensor 5" },
+  { id: "COLE_O_ID_6_AQUI", name: "Sensor 6" },
+  { id: "COLE_O_ID_7_AQUI", name: "Sensor 7" },
+  { id: "COLE_O_ID_8_AQUI", name: "Sensor 8" },
+  { id: "COLE_O_ID_9_AQUI", name: "Sensor 9" },
+  { id: "COLE_O_ID_10_AQUI", name: "Sensor 10" },
 ];
 
-const DEFAULT_REFRESH_SECONDS = 30;
-const HISTORY_WINDOW_MS = 24 * 60 * 60 * 1000;
-const HISTORY_MAX_POINTS = 480;
+const DEFAULT_REFRESH_SECONDS = 300; // 5 minutos
+const HISTORY_WINDOW_MS = 24 * 60 * 60 * 1000; // 24h
+const HISTORY_MAX_POINTS = 480;      // segurança
 
-/** ========= HELPERS ========= */
+/** ========= HELPERS (LÓGICA - NÃO MEXER) ========= */
 function parseFunctionValues(valuesStr) {
   try { return JSON.parse(valuesStr || "{}"); } catch { return {}; }
 }
@@ -32,62 +33,21 @@ function scaleNormalize(value, meta) {
     if (typeof meta.values === 'string') {
         try { conf = JSON.parse(meta.values || "{}"); } catch { conf = {}; }
     } else if (typeof meta.values === 'object' && meta.values !== null) {
-        conf = meta.values; // Já é um objeto
+        conf = meta.values;
     }
-    
     const scale = Number(conf.scale || 0);
-    
     if (Number.isFinite(value) && Number.isFinite(scale) && scale > 0) {
       return value / Math.pow(10, scale);
     }
   }
   return value;
 }
-function unitFor(code) {
-  const c = String(code || "").toLowerCase();
-  if (c.includes("temp")) return "°C";
-  if (c.includes("humid")) return "%";
-  if (c.includes("batt")) return "%";
-  return "";
-}
-function limitsFor(device) {
-  return {
-    temp: { ...DEFAULT_LIMITS.temp, ...(device?.limits?.temp || {}) },
-    hum:  { ...DEFAULT_LIMITS.hum,  ...(device?.limits?.hum  || {}) },
-  };
-}
-function outOfRange(val, min, max) {
-  if (typeof val !== "number") return false;
-  if (Number.isFinite(min) && val < min) return true;
-  if (Number.isFinite(max) && val > max) return true;
-  return false;
-}
-function csvFromHistory(name, arr) {
-  const header = "time_iso,temp,hum";
-  const lines = (arr || []).map(p => {
-    const iso = new Date(p.t).toISOString();
-    const t = (typeof p.temp === "number") ? p.temp.toFixed(2) : "";
-    const h = (typeof p.hum === "number") ? p.hum.toFixed(0) : "";
-    return `${iso},${t},${h}`;
-  });
-  const csv = [header, ...lines].join("\n");
-  const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(blob);
-  a.download = `${(name || "device").replace(/\s+/g, "_")}_24h.csv`;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(a.href);
-}
-
 async function getAccessToken() {
   const r = await fetch("/api/get-tuya-token"); 
   const j = await r.json();
   if (j?.success && j?.result?.access_token) return j.result.access_token;
-  throw new Error("Falha ao obter access_token");
+  throw new Error(j?.msg || "Falha ao obter access_token");
 }
-
 async function tuyaProxy({ token, tuyaPath, method = "GET", body = {} }) {
   const r = await fetch("/api/proxy", { 
     method: "POST",
@@ -102,7 +62,6 @@ async function tuyaProxy({ token, tuyaPath, method = "GET", body = {} }) {
   const j = await r.json();
   return { status: r.status, data: j };
 }
-
 function prefer(keys, statusArr) {
   const map = new Map((statusArr || []).map((s) => [s.code, s.value]));
   for (const k of keys) if (map.has(k)) return { code: k, value: map.get(k) };
@@ -116,6 +75,8 @@ function prefer(keys, statusArr) {
   }
   return null;
 }
+
+// --- LÓGICA DE HISTÓRICO ADICIONADA ---
 function loadHistory(deviceId) {
   if (typeof window === "undefined") return [];
   try { return JSON.parse(localStorage.getItem(`history:${deviceId}`) || "[]"); }
@@ -125,50 +86,107 @@ function saveHistory(deviceId, arr) {
   if (typeof window === "undefined") return;
   try { localStorage.setItem(`history:${deviceId}`, JSON.stringify(arr)); } catch {}
 }
+// ------------------------------------
 
-/** ========= UI ========= */
-function Badge({ type = "loading", children }) {
-  const base = {
-    padding: "4px 8px",
-    fontSize: 12,
-    borderRadius: 8,
-    display: "inline-flex",
-    alignItems: "center",
-    border: "1px solid",
-    gap: 6,
-  };
-  const palette =
-    type === "ok" ? { background: "#E8F5E9", color: "#2E7D32", borderColor: "#C8E6C9" } :
-    type === "error" ? { background: "#FFEBEE", color: "#C62828", borderColor: "#FFCDD2" } :
-    type === "warn" ? { background: "#FFF8E1", color: "#EF6C00", borderColor: "#FFE0B2" } :
-                      { background: "#E3F2FD", color: "#1565C0", borderColor: "#BBDEFB" };
-  return <span style={{ ...base, ...palette }}>{children}</span>;
-}
-function Card({ title, value, unit, meta, loading, footer }) {
-  const box = {
-    borderRadius: 16,
-    border: "1px solid #eee",
-    background: "#fff",
-    boxShadow: "0 4px 10px rgba(0,0,0,0.05)",
-    padding: 16,
-  };
-  const titleCss = { fontSize: 12, color: "#6b7280" };
-  const valueCss = { fontSize: 28, fontWeight: 600, marginTop: 4 };
-  const metaCss = { fontSize: 11, color: "#9ca3af", marginTop: 6 };
-  return (
-    <div style={box}>
-      <div style={titleCss}>{title}</div>
-      <div style={valueCss}>
-        {loading ? "—" : value}{unit ? ` ${unit}` : ""}
-      </div>
-      {meta ? <div style={metaCss}>{meta}</div> : null}
-      {footer}
+/** ========= ESTILOS (CSS-in-JS) ========= */
+const styles = {
+  page: { 
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
+    backgroundColor: "#f0f2f5", 
+    margin: 0, 
+    padding: "20px",
+    minHeight: "100vh",
+  },
+  header: { 
+    textAlign: "center", 
+    color: "#1c1e21", 
+    width: "100%", 
+    marginBottom: "20px" 
+  },
+  container: { 
+    display: "flex", 
+    flexWrap: "wrap", 
+    justifyContent: "center", 
+    gap: "20px",
+    maxWidth: 1400,
+    margin: "0 auto",
+  },
+  card: { 
+    backgroundColor: "white", 
+    borderRadius: "8px", 
+    boxShadow: "0 4px 8px rgba(0,0,0,0.1)", 
+    padding: "20px", 
+    minWidth: "260px", 
+    textAlign: "center", 
+    transition: "transform 0.2s, opacity 0.2s",
+    opacity: 1,
+  },
+  cardOffline: {
+    opacity: 0.6,
+  },
+  cardTitle: { 
+    marginTop: 0, 
+    color: "#05386b", 
+    fontSize: "1.5em", 
+    fontWeight: 600,
+    marginBottom: "20px",
+  },
+  data: { 
+    display: "flex", 
+    justifyContent: "space-around", 
+    alignItems: "center", 
+    margin: "20px 0", 
+    color: "#333",
+    flexWrap: "wrap",
+    gap: "16px",
+  },
+  dataPoint: {
+    fontSize: "2em",
+  },
+  dataUnit: { 
+    fontSize: "0.5em", 
+    color: "#666", 
+    verticalAlign: "super",
+  },
+  battery: { 
+    fontSize: "1em", 
+    color: "#555", 
+    marginTop: "15px", 
+  },
+  statusBanner: { 
+    marginTop: "15px", 
+    padding: "10px", 
+    borderRadius: "5px", 
+    color: "white", 
+    fontWeight: "bold",
+  },
+  statusLoading: { 
+    background: "#ff9800", // Laranja
+  },
+  statusOk: { 
+    background: "#4CAF50", // Verde
+  },
+  statusError: { 
+    background: "#f44336", // Vermelho
+  },
+  globalError: { 
+    color: "#f44336", 
+    fontWeight: "bold", 
+    marginTop: 20, 
+    minHeight: 20, 
+    textAlign: "center", 
+    width: "100%",
+  },
+};
+
+/** ========= COMPONENTE DE GRÁFICO (ADICIONADO) ========= */
+function Sparkline({ values = [], stroke = "#0ea5e9", width = 220, height = 48 }) {
+  const W = width, H = height, P = 6;
+  if (!values.length || values.length < 2) return (
+    <div style={{ height: H, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#999', fontSize: 14, background: '#fafafa', borderRadius: 8 }}>
+      Sem dados de histórico suficientes
     </div>
   );
-}
-function Sparkline({ values = [], stroke = "#0ea5e9" }) {
-  const W = 220, H = 48, P = 6;
-  if (!values.length) return <div style={{ height: H }} />;
   const min = Math.min(...values);
   const max = Math.max(...values);
   const rng = max - min || 1;
@@ -179,25 +197,150 @@ function Sparkline({ values = [], stroke = "#0ea5e9" }) {
     return `${x},${y}`;
   });
   return (
-    <svg width={W} height={H} style={{ display: "block" }}>
+    <svg width={W} height={H} style={{ display: "block", margin: '0 auto' }}>
       <polyline fill="none" stroke={stroke} strokeWidth={2} points={points.join(" ")} />
     </svg>
   );
 }
 
-/** ========= PÁGINA ========= */
+/** ========= COMPONENTE DO MODAL (ADICIONADO) ========= */
+function HistoryModal({ device, historyData, onClose }) {
+  const modalOverlay = {
+    position: 'fixed',
+    top: 0, left: 0, right: 0, bottom: 0,
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 1000,
+  };
+  const modalContent = {
+    background: 'white',
+    padding: '24px',
+    borderRadius: '12px',
+    boxShadow: '0 10px 30px rgba(0,0,0,0.2)',
+    minWidth: '500px',
+    maxWidth: '90%',
+  };
+  const modalHeader = {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    borderBottom: '1px solid #eee',
+    paddingBottom: '12px',
+    marginBottom: '20px',
+  };
+  const modalTitle = {
+    fontSize: '1.25rem',
+    fontWeight: 600,
+    color: '#111',
+  };
+  const closeButton = {
+    background: '#eee',
+    border: 'none',
+    borderRadius: '50%',
+    width: '32px',
+    height: '32px',
+    cursor: 'pointer',
+    fontSize: '18px',
+    lineHeight: '30px',
+    textAlign: 'center',
+  };
+  const chartLabel = {
+    fontSize: '0.9rem',
+    color: '#555',
+    marginBottom: '8px',
+  };
+
+  const tempSeries = historyData.map(p => (typeof p.temp === "number" ? p.temp : null)).filter(x => x !== null);
+  const humSeries  = historyData.map(p => (typeof p.hum  === "number" ? p.hum  : null)).filter(x => x !== null);
+
+  return (
+    <div style={modalOverlay} onClick={onClose}>
+      <div style={modalContent} onClick={(e) => e.stopPropagation()}>
+        <div style={modalHeader}>
+          <div style={modalTitle}>Histórico 24h: {device.name}</div>
+          <button style={closeButton} onClick={onClose}>&times;</button>
+        </div>
+        
+        <div style={chartLabel}>Temperatura (°C) - (Últimas 24h)</div>
+        <Sparkline values={tempSeries} stroke="#0ea5e9" width={450} height={80} />
+        
+        <div style={{...chartLabel, marginTop: '20px'}}>Umidade (%) - (Últimas 24h)</div>
+        <Sparkline values={humSeries} stroke="#10b981" width={450} height={80} />
+      </div>
+    </div>
+  );
+}
+
+/** ========= COMPONENTE DO CARD (MODIFICADO) ========= */
+function DeviceCard({ devMeta, onTempClick }) {
+  const { 
+    tVal, hVal, bVal, 
+    tempAlert, humAlert, lowBattery 
+  } = devMeta.metrics;
+
+  const isLoading = devMeta.loading;
+  const isOffline = devMeta.online === false;
+  const isError = !devMeta.ok || isOffline;
+  const hasAlert = !isError && (tempAlert || humAlert || lowBattery);
+
+  let statusText = "A carregar...";
+  let statusStyle = {...styles.statusBanner, ...styles.statusLoading};
+
+  if (!isLoading) {
+    if (isError) {
+      statusText = isOffline ? "Status: Offline" : "Status: Erro";
+      statusStyle = {...styles.statusBanner, ...styles.statusError};
+    } else if (hasAlert) {
+      statusText = "Status: Alerta";
+      statusStyle = {...styles.statusBanner, ...styles.statusError};
+    } else {
+      statusText = "Status: OK";
+      statusStyle = {...styles.statusBanner, ...styles.statusOk};
+    }
+  }
+
+  const tempStr = isLoading ? "--" : (typeof tVal === "number" ? tVal.toFixed(1) : "--");
+  const humStr = isLoading ? "--" : (typeof hVal === "number" ? hVal.toFixed(0) : "--");
+  const batStr = isLoading ? "--" : (typeof bVal === "number" ? bVal : "--");
+
+  let cardStyle = {...styles.card};
+  if (isOffline) {
+    cardStyle = {...cardStyle, ...styles.cardOffline};
+  }
+  
+  return (
+    <div style={cardStyle}>
+      <h2 style={styles.cardTitle}>{devMeta.name}</h2>
+      <div style={styles.data}>
+        {/* --- DIV CLICÁVEL ADICIONADA --- */}
+        <div 
+          style={{...styles.dataPoint, cursor: 'pointer'}} 
+          onClick={onTempClick} 
+          title="Ver histórico 24h"
+        >
+          {tempStr}<span style={styles.dataUnit}>°C</span>
+        </div>
+        <div style={styles.dataPoint}>
+          {humStr}<span style={styles.dataUnit}>%</span>
+        </div>
+      </div>
+      <div style={styles.battery}>🔋 {batStr}%</div>
+      <div style={statusStyle}>{statusText}</div>
+    </div>
+  );
+}
+
+/** ========= PÁGINA PRINCIPAL (MODIFICADA) ========= */
 export default function TuyaMultiEnvDashboard() {
   const [token, setToken] = useState(null);
   const [refreshSec, setRefreshSec] = useState(DEFAULT_REFRESH_SECONDS);
   const [error, setError] = useState("");
   const [lastUpdated, setLastUpdated] = useState(null);
-
-  const [query, setQuery] = useState("");
-  const [sortKey, setSortKey] = useState("name");
-  const [sortDir, setSortDir] = useState("asc");
-  const [onlyOffline, setOnlyOffline] = useState(false);
-  const [onlyAlert, setOnlyAlert] = useState(false);
-
+  
+  const [modalDevice, setModalDevice] = useState(null); // Estado para o modal
+  
   const [items, setItems] = useState(() =>
     DEVICES.map((d) => ({
       id: d.id,
@@ -211,6 +354,7 @@ export default function TuyaMultiEnvDashboard() {
     }))
   );
 
+  // Estado para o histórico, carregado do localStorage no cliente
   const [history, setHistory] = useState({});
   useEffect(() => {
     const initialHistory = {};
@@ -219,6 +363,18 @@ export default function TuyaMultiEnvDashboard() {
   }, []);
 
   const timerRef = useRef(null);
+
+  // Função para salvar no histórico
+  function pushHistory(deviceId, { temp, hum, t }) {
+    const now = t || Date.now();
+    setHistory((prev) => {
+      const list = [...(prev[deviceId] || []), { t: now, temp, hum }];
+      const cutoff = now - HISTORY_WINDOW_MS;
+      const trimmed = list.filter((p) => p.t >= cutoff).slice(-HISTORY_MAX_POINTS);
+      saveHistory(deviceId, trimmed);
+      return { ...prev, [deviceId]: trimmed };
+    });
+  }
 
   async function ensureToken() {
     if (token) return token;
@@ -232,7 +388,6 @@ export default function TuyaMultiEnvDashboard() {
     let { data: s } = await tuyaProxy({
       token: currentToken,
       tuyaPath: `/v1.0/devices/${deviceId}/status`,
-      method: "GET",
     });
     // token expirado → renova e re-tenta
     if (s?.code === 1010 || s?.msg === "token invalid") {
@@ -241,7 +396,6 @@ export default function TuyaMultiEnvDashboard() {
       ({ data: s } = await tuyaProxy({
         token: newTk,
         tuyaPath: `/v1.0/devices/${deviceId}/status`,
-        method: "GET",
       }));
     }
     if (!s?.success) throw new Error(s?.msg || "Falha ao obter status");
@@ -250,14 +404,12 @@ export default function TuyaMultiEnvDashboard() {
     const { data: f } = await tuyaProxy({
       token: token || (await ensureToken()),
       tuyaPath: `/v1.0/devices/${deviceId}/functions`,
-      method: "GET",
     });
 
     // info (online/offline)
     const { data: info } = await tuyaProxy({
       token: token || (await ensureToken()),
       tuyaPath: `/v1.0/devices/${deviceId}`,
-      method: "GET",
     });
 
     return {
@@ -267,23 +419,15 @@ export default function TuyaMultiEnvDashboard() {
     };
   }
 
-  function pushHistory(deviceId, { temp, hum, t }) {
-    const now = t || Date.now();
-    setHistory((prev) => {
-      const list = [...(prev[deviceId] || []), { t: now, temp, hum }];
-      const cutoff = now - HISTORY_WINDOW_MS;
-      const trimmed = list.filter((p) => p.t >= cutoff).slice(-HISTORY_MAX_POINTS);
-      saveHistory(deviceId, trimmed);
-      return { ...prev, [deviceId]: trimmed };
-    });
-  }
-
   async function loadAll() {
     setError("");
     try {
       const tk = await ensureToken();
       const results = await Promise.all(
         DEVICES.map(async (d) => {
+          if (d.id.startsWith("COLE_O_ID_")) {
+            return { id: d.id, ok: false, err: "ID não configurado" };
+          }
           try {
             const r = await fetchOne(d.id, tk);
             return { id: d.id, ok: true, ...r };
@@ -309,23 +453,33 @@ export default function TuyaMultiEnvDashboard() {
         })
       );
 
-      // atualizar histórico (apenas online)
+      // --- LÓGICA DE HISTÓRICO ADICIONADA AQUI ---
       const now = Date.now();
       results.forEach((res) => {
-        if (!res?.ok || res?.online === false) return;
-        const fnMap = new Map((res.functions?.functions || []).map((f) => [f.code, f]));
-        const tempPref = ["va_temperature", "temp_current", "temperature", "temp_value", "temp_set"];
-        const humPref  = ["va_humidity", "humidity_value", "humidity"];
-        const tSel = prefer(tempPref, res.status);
-        const hSel = prefer(humPref,  res.status);
-        const tMeta = tSel ? fnMap.get(tSel.code) : null;
-        const hMeta = hSel ? fnMap.get(hSel.code) : null;
-        const tVal = tSel ? scaleNormalize(tSel.value, tMeta) : null;
-        const hVal = hSel ? scaleNormalize(hSel.value, hMeta) : null;
-        if (typeof tVal === "number" || typeof hVal === "number") {
-          pushHistory(res.id, { t: now, temp: typeof tVal === "number" ? tVal : null, hum: typeof hVal === "number" ? hVal : null });
-        }
+          if (!res?.ok || res?.online === false) return;
+          
+          const fnMap = new Map((res.functions?.functions || []).map((f) => [f.code, f]));
+          const tempPref = ["va_temperature", "temp_current", "temperature", "temp_value", "temp_set"];
+          const humPref  = ["va_humidity", "humidity_value", "humidity"];
+          
+          const tSel = prefer(tempPref, res.status);
+          const hSel = prefer(humPref,  res.status);
+          
+          const tMeta = tSel ? fnMap.get(tSel.code) : null;
+          const hMeta = hSel ? fnMap.get(hSel.code) : null;
+
+          let tVal = tSel ? scaleNormalize(tSel.value, tMeta) : null;
+          let hVal = hSel ? scaleNormalize(hSel.value, hMeta) : null;
+
+          if (tSel && (tSel.code === 'va_temperature' || tSel.code === 'temp_current') && tVal === tSel.value && Math.abs(tVal) > 100) {
+             tVal = tVal / 10.0;
+          }
+
+          if (typeof tVal === "number" || typeof hVal === "number") {
+            pushHistory(res.id, { t: now, temp: typeof tVal === "number" ? tVal : null, hum: typeof hVal === "number" ? hVal : null });
+          }
       });
+      // ------------------------------------------
 
       setLastUpdated(new Date());
     } catch (e) {
@@ -338,265 +492,95 @@ export default function TuyaMultiEnvDashboard() {
     return () => timerRef.current && clearInterval(timerRef.current);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+  
   useEffect(() => {
     if (timerRef.current) clearInterval(timerRef.current);
     if (refreshSec > 0) timerRef.current = setInterval(loadAll, refreshSec * 1000);
     return () => timerRef.current && clearInterval(timerRef.current);
   }, [refreshSec]);
 
-  /** ======== cálculo de métricas p/ ordenar/filtrar ======== */
-  function metricsFor(devMeta) {
-    const deviceCfg = DEVICES.find(d => d.id === devMeta.id) || {};
-    const lim = limitsFor(deviceCfg);
-    const fnMap = new Map((devMeta.functions?.functions || []).map((f) => [f.code, f]));
-    const tempPref = ["va_temperature", "temp_current", "temperature", "temp_value", "temp_set"];
-    const humPref  = ["va_humidity", "humidity_value", "humidity"];
-    const batPref  = ["battery_percentage", "battery_value", "battery_state", "battery"];
+  // Pré-calcula métricas para todos os itens
+  const itemsWithMetrics = useMemo(() => {
+    return items.map(devMeta => {
+      const fnMap = new Map((devMeta.functions?.functions || []).map((f) => [f.code, f]));
+      const tempPref = ["va_temperature", "temp_current", "temperature", "temp_value", "temp_set"];
+      const humPref  = ["va_humidity", "humidity_value", "humidity"];
+      const batPref  = ["battery_percentage", "battery_value", "battery_state", "battery"];
 
-    const tSel = prefer(tempPref, devMeta.status);
-    const hSel = prefer(humPref,  devMeta.status);
-    const bSel = prefer(batPref,  devMeta.status);
+      const tSel = prefer(tempPref, devMeta.status);
+      const hSel = prefer(humPref,  devMeta.status);
+      const bSel = prefer(batPref,  devMeta.status);
 
-    const tMeta = tSel ? fnMap.get(tSel.code) : null;
-    const hMeta = hSel ? fnMap.get(hSel.code) : null;
+      const tMeta = tSel ? fnMap.get(tSel.code) : null;
+      const hMeta = hSel ? fnMap.get(hSel.code) : null;
 
-    let tVal = tSel ? scaleNormalize(tSel.value, tMeta) : null;
-    let hVal = hSel ? scaleNormalize(hSel.value, hMeta) : null;
-    let bVal = bSel ? bSel.value : null;
+      let tVal = tSel ? scaleNormalize(tSel.value, tMeta) : null;
+      let hVal = hSel ? scaleNormalize(hSel.value, hMeta) : null;
+      let bVal = bSel ? bSel.value : null;
 
-    // --- CORREÇÃO DE ESCALA MANUAL ---
-    // Se a normalização automática falhou (tVal === tSel.value)
-    // E o código for 'va_temperature' (sabemos que este tem escala)
-    // E o valor for irrealisticamente alto (acima de 100), aplicamos a escala de 10.
-    if (tSel && (tSel.code === 'va_temperature' || tSel.code === 'temp_current') && tVal === tSel.value && Math.abs(tVal) > 100) {
-       tVal = tVal / 10.0;
-    }
-    // --- FIM DA CORREÇÃO ---
-
-
-    if (typeof bVal === "string") {
-      const map = { low: 20, medium: 50, high: 80, full: 100 };
-      bVal = map[bVal.toLowerCase()] ?? bVal;
-    }
-    if (typeof bVal === "number") bVal = Math.max(0, Math.min(100, bVal));
-
-    const tempAlert  = outOfRange(tVal, lim.temp.min, lim.temp.max);
-    const humAlert   = outOfRange(hVal, lim.hum.min,  lim.hum.max);
-    const lowBattery = typeof bVal === "number" && bVal < 20;
-
-    return { tVal, hVal, bVal, tempAlert, humAlert, lowBattery, limits: lim };
-  }
-
-  /** ======== busca + filtros + ordenação ======== */
-  const visibleItems = useMemo(() => {
-    let arr = items.filter((d) => {
-      const q = query.trim().toLowerCase();
-      if (!q) return true;
-      return d.name.toLowerCase().includes(q) || d.id.toLowerCase().includes(q);
-    });
-
-    if (onlyOffline || onlyAlert) {
-      arr = arr.filter((d) => {
-        const m = metricsFor(d);
-        const isAlert = m.tempAlert || m.humAlert || m.lowBattery;
-        const isOffline = d.online === false;
-        if (onlyOffline && onlyAlert) return isOffline || isAlert;
-        if (onlyOffline) return isOffline;
-        if (onlyAlert) return isAlert;
-        return true;
-      });
-    }
-
-    const withMetrics = arr.map((d) => ({ d, m: metricsFor(d) }));
-    withMetrics.sort((A, B) => {
-      const a = A.d, b = B.d;
-      const ma = A.m, mb = B.m;
-
-      let va, vb;
-      switch (sortKey) {
-        case "temp": va = ma.tVal ?? -Infinity; vb = mb.tVal ?? -Infinity; break;
-        case "hum":  va = ma.hVal ?? -Infinity; vb = mb.hVal ?? -Infinity; break;
-        case "batt": va = ma.bVal ?? -Infinity; vb = mb.bVal ?? -Infinity; break;
-        default:     va = a.name.toLowerCase(); vb = b.name.toLowerCase();
+      if (tSel && (tSel.code === 'va_temperature' || tSel.code === 'temp_current') && tVal === tSel.value && Math.abs(tVal) > 100) {
+         tVal = tVal / 10.0;
       }
-      let cmp = 0;
-      if (typeof va === "number" && typeof vb === "number") cmp = va - vb;
-      else cmp = String(va).localeCompare(String(vb));
-      return sortDir === "asc" ? cmp : -cmp;
-    });
-
-    return withMetrics.map(({ d }) => d);
-  }, [items, query, onlyOffline, onlyAlert, sortKey, sortDir]);
-
-  /** ======== render de card ======== */
-  function renderDevice(devMeta) {
-    const deviceCfg = DEVICES.find(d => d.id === devMeta.id) || {};
-    const { tVal, hVal, bVal, tempAlert, humAlert, lowBattery, limits } = metricsFor(devMeta);
-
-    const cardBorder =
-      devMeta.online === false ? "1px solid #FCA5A5" :
-      tempAlert || humAlert     ? "1px solid #F59E0B" :
-      lowBattery             ? "1px solid #FCA5A5" : "1px solid #eee";
-
-    const opacityOffline = devMeta.online === false ? 0.7 : 1;
-
-    const wrapper = { borderRadius: 16, border: cardBorder, background: "#fff", padding: 16, boxShadow: "0 4px 10px rgba(0,0,0,0.05)", opacity: opacityOffline };
-    const top = { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12, gap: 8, flexWrap: "wrap" };
-    const idCss = { fontSize: 12, color: "#6b7280" };
-    const nameCss = { fontSize: 16, fontWeight: 600 };
-    const grid = { display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 16 };
-
-    const hist = history[devMeta.id] || [];
-    const tempSeries = hist.map(p => (typeof p.temp === "number" ? p.temp : null)).filter(x => x !== null);
-    const humSeries  = hist.map(p => (typeof p.hum  === "number" ? p.hum  : null)).filter(x => x !== null);
-
-    return (
-      <div key={devMeta.id} style={wrapper}>
-        <div style={top}>
-          <div>
-            <div style={idCss}>{devMeta.id}</div>
-            <div style={nameCss}>{devMeta.name}</div>
-          </div>
-
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            {devMeta.online === false && <Badge type="error">Offline</Badge>}
-            {tempAlert && <Badge type="warn">Temp fora ({limits.temp.min}–{limits.temp.max}°C)</Badge>}
-            {humAlert && <Badge type="warn">Umidade fora ({limits.hum.min}–{limits.hum.max}%)</Badge>}
-            {lowBattery && <Badge type="error">Bateria baixa</Badge>}
-            {devMeta.loading ? <Badge>Carregando…</Badge> : devMeta.ok ? <Badge type="ok">OK</Badge> : <Badge type="error">Erro</Badge>}
-          </div>
-        </div>
-
-        <div style={grid}>
-          <Card
-            title="Temperatura"
-            value={devMeta.loading ? "—" : (typeof tVal === "number" ? tVal.toFixed(1) : tVal ?? "—")}
-            unit="°C"
-            meta={`Limites: ${limits.temp.min}–${limits.temp.max}°C`}
-            loading={devMeta.loading}
-            footer={<Sparkline values={tempSeries} stroke="#0ea5e9" />}
-          />
-          <Card
-            title="Umidade"
-            value={devMeta.loading ? "—" : (typeof hVal === "number" ? hVal.toFixed(0) : hVal ?? "—")}
-            unit="%"
-            meta={`Limites: ${limits.hum.min}–${limits.hum.max}%`}
-            loading={devMeta.loading}
-            footer={<Sparkline values={humSeries} stroke="#10b981" />}
-          />
-          <Card
-            title="Bateria"
-            value={devMeta.loading ? "—" : (typeof bVal === "number" ? `${bVal}` : String(bVal ?? "—"))}
-            unit="%"
-            loading={devMeta.loading}
-          />
-        </div>
-
-        {!devMeta.ok && devMeta.err ? (
-          <div style={{ marginTop: 8, fontSize: 12, color: "#C62828" }}>Erro: {devMeta.err}</div>
-        ) : null}
-
-        <div style={{ marginTop: 12, display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <button
-            onClick={() => csvFromHistory(devMeta.name, history[devMeta.id] || [])}
-            style={{ padding: "8px 12px", borderRadius: 12, border: "1px solid #e5e7eb", background: "#111827", color: "#fff", cursor: "pointer" }}
-          >
-            Exportar CSV (24h)
-          </button>
-          <details>
-            <summary style={{ cursor: "pointer", fontSize: 13, color: "#6b7280" }}>Debug (status & functions)</summary>
-            <pre style={{ marginTop: 8, whiteSpace: "pre-wrap", wordBreak: "break-all", background: "#F9FAFB", padding: 12, borderRadius: 8, border: "1px solid #eee", fontSize: 12, color: "#374151" }}>
-{JSON.stringify({ status: devMeta.status, functions: devMeta.functions }, null, 2)}
-            </pre>
-          </details>
-        </div>
-      </div>
-    );
-  }
-
-  // layout
-  const page = { minHeight: "100vh", background: "linear-gradient(135deg, #f8fafc, #eef2f7)", color: "#111827" };
-  const container = { maxWidth: 1200, margin: "0 auto", padding: 24 };
-  const header = { display: "flex", gap: 16, alignItems: "flex-end", justifyContent: "space-between", marginBottom: 24, flexWrap: "wrap" };
-  const gridAll = { display: "grid", gridTemplateColumns: "1fr", gap: 20 }; // Padrão 1 coluna
-  const input = { padding: "8px 12px", borderRadius: 12, border: "1px solid #ddd", minWidth: 220 };
-  const selectCss = { padding: "8px 12px", borderRadius: 12, border: "1px solid #ddd" };
-  const btn = { padding: "8px 16px", borderRadius: 16, background: "#111827", color: "#fff", border: "none", cursor: "pointer" };
-  const checkbox = { display: "inline-flex", alignItems: "center", gap: 6, fontSize: 13, color: "#374151" };
-
-  const responsiveStyle = `
-    @media (min-width: 1024px) {
-      .main-grid {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
+      
+      if (typeof bVal === "string") {
+        const map = { low: 20, medium: 50, high: 80, full: 100 };
+        bVal = map[bVal.toLowerCase()] ?? bVal;
       }
-    }
-  `;
+      if (typeof bVal === "number") bVal = Math.max(0, Math.min(100, bVal));
+
+      const tempAlert  = false;
+      const humAlert   = false;
+      const lowBattery = typeof bVal === "number" && bVal < 20;
+
+      return { ...devMeta, metrics: { tVal, hVal, bVal, tempAlert, humAlert, lowBattery } };
+    });
+  }, [items]);
+
 
   return (
-    <div style={page}>
-      <style>{responsiveStyle}</style>
-      <div style={container}>
-        <div style={header}>
-          <div>
-            <h1 style={{ margin: 0, fontSize: 22, fontWeight: 700 }}>Painel – Temperatura, Umidade e Bateria</h1>
-            <div style={{ fontSize: 12, color: "#6b7280" }}>
-              Busca • Ordenar • Filtros • Histórico 24h • CSV • Token/Proxy automáticos
-            </div>
-          </div>
-
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
-            <input
-              placeholder="Buscar por nome ou ID…"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              style={input}
-            />
-            <select style={selectCss} value={sortKey} onChange={(e) => setSortKey(e.target.value)}>
-              <option value="name">Ordenar: Nome</option>
-              <option value="temp">Ordenar: Temperatura</option>
-              <option value="hum">Ordenar: Umidade</option>
-              <option value="batt">Ordenar: Bateria</option>
-            </select>
-            <select style={selectCss} value={sortDir} onChange={(e) => setSortDir(e.target.value)}>
-              <option value="asc">Ascendente</option>
-              <option value="desc">Descendente</option>
-            </select>
-            <label style={checkbox}>
-              <input type="checkbox" checked={onlyOffline} onChange={(e) => setOnlyOffline(e.target.checked)} />
-              Somente offline
-            </label>
-            <label style={checkbox}>
-              <input type="checkbox" checked={onlyAlert} onChange={(e) => setOnlyAlert(e.target.checked)} />
-              Somente com alerta
-            </label>
-            <select style={selectCss} value={refreshSec} onChange={(e) => setRefreshSec(Number(e.target.value))}>
-              <option value={0}>Atualização: Manual</option>
-              <option value={15}>Atualização: 15s</option>
-              <option value={30}>Atualização: 30s</option>
-              <option value={60}>Atualização: 60s</option>
-              <option value={120}>Atualização: 2m</option>
-              <option value={300}>Atualização: 5m</option>
-            </select>
-            <button onClick={loadAll} style={btn}>Atualizar</button>
-          </div>
-        </div>
-
-        {error ? (
-          <div style={{ marginBottom: 16, padding: 12, borderRadius: 12, background: "#FFEBEE", color: "#C62828", border: "1px solid #FFCDD2", fontSize: 14 }}>
-            Erro global: {error}
-          </div>
-        ) : null}
-
-        <div style={gridAll} className="main-grid">
-            {visibleItems.map((d) => renderDevice(d))}
-        </div>
-
-        <div style={{ marginTop: 16, fontSize: 12, color: "#6b7280", display: "flex", gap: 8 }}>
-          <span>Última atualização: {lastUpdated ? lastUpdated.toLocaleString() : "—"}</span>
-          <span>•</span>
-          <span>Token renova automaticamente ao receber 1010.</span>
+    <div style={styles.page}>
+      <div style={styles.header}>
+        <h1 style={{ fontSize: "2.5em", margin: 0 }}>Painel de Monitoramento (Versão Final)</h1>
+        <div style={{ fontSize: 12, color: "#6b7280" }}>
+          Última atualização: {lastUpdated ? lastUpdated.toLocaleString() : "—"}
+          (Auto-refresh: 
+          <select 
+             value={refreshSec} 
+             onChange={(e) => setRefreshSec(Number(e.target.value))}
+             style={{ marginLeft: 5, fontSize: 12, border: 'none', background: 'transparent' }}
+          >
+            <option value={0}>Manual</option>
+            <option value={300}>5m</option>
+            <option value={600}>10m</option>
+            <option valueV={1800}>30m</option>
+          </select>
+          )
+          <button onClick={loadAll} style={{ marginLeft: 10, padding: "4px 8px", fontSize: 12, cursor: 'pointer' }}>Atualizar Agora</button>
         </div>
       </div>
+
+      {error && (
+        <p style={styles.globalError}>Erro Global: {String(error)}</p>
+      )}
+
+      <div style={styles.container}>
+        {itemsWithMetrics.map((d) => (
+          <DeviceCard 
+             key={d.id} 
+             devMeta={d} 
+             onTempClick={() => setModalDevice(d)} // Define o dispositivo para o modal
+          />
+        ))}
+      </div>
+
+      {/* --- RENDERIZA O MODAL (SE MODALDEVICE ESTIVER DEFINIDO) --- */}
+      {modalDevice && (
+        <HistoryModal 
+          device={modalDevice}
+          historyData={history[modalDevice.id] || []}
+          onClose={() => setModalDevice(null)} // Função para fechar o modal
+        />
+      )}
     </div>
   );
 }
